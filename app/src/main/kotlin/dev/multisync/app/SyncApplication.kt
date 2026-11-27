@@ -13,7 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class SyncApplication : Application() {
-    val database by lazy { Room.databaseBuilder(this, SyncDatabase::class.java, "multisync.db").build() }
+    val database by lazy { Room.databaseBuilder(this, SyncDatabase::class.java, "multisync.db").addMigrations(SyncDatabase.MIGRATION_1_2).build() }
     val settings by lazy { SettingsStore(this) }
     val coordinator by lazy { SyncCoordinator(this) }
     override fun onCreate() {

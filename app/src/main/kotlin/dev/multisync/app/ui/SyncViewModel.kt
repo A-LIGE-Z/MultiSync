@@ -159,6 +159,7 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     private var appsJob: Job? = null
     val settings = app.settings.state
     val logs = dao.observeLogs().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val transfers = dao.observeTransfers().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val rules = dao.observeRules().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val status = app.coordinator.status
     private val mutableMessage = MutableStateFlow("")
@@ -682,6 +683,11 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
         dao.deleteRule(id)
         if (versionsRequested) loadRemoteVersions(force = true)
         notify("规则已移除，远端归档保留")
+    }
+
+    fun clearTransfers() = action {
+        withContext(Dispatchers.IO) { dao.clearTransfers() }
+        notify("传输记录已清空")
     }
 
     fun syncNow() {

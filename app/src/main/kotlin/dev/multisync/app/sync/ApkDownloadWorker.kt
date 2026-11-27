@@ -14,6 +14,7 @@ import dev.multisync.app.MainActivity
 import dev.multisync.app.R
 import dev.multisync.app.SyncApplication
 import dev.multisync.app.data.Settings
+import dev.multisync.app.data.TransferRecord
 import dev.multisync.core.*
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
@@ -36,6 +37,7 @@ class ApkDownloadWorker(context: Context, parameters: WorkerParameters) : Corout
     override suspend fun doWork(): Result = coroutineScope {
         val app = applicationContext as SyncApplication
         var finished = false
+        var recordRef: CatalogRelease? = null
         val destination = inputData.getString(DESTINATION)?.let(Uri::parse)
         val observer = launch { app.coordinator.transfer.sample(500L).collect {
             if (it.manualDownload) try { setForeground(foregroundInfo(it)) }
@@ -45,14 +47,22 @@ class ApkDownloadWorker(context: Context, parameters: WorkerParameters) : Corout
         try {
             setForeground(foregroundInfo())
             val record = SyncJson.decodeFromString<CatalogRelease>(inputData.getString(RECORD) ?: error("缺少下载版本信息"))
+            recordRef = record
             val dest = checkNotNull(destination) { "缺少保存位置" }
             val result = app.coordinator.downloadApk(record, dest, inputData.getString(CONNECTION).orEmpty())
             finished = true
+            app.database.dao().addTransfer(TransferRecord(direction = "download", name = result.name, packageName = record.release.packageName,
+                versionName = record.release.versionName, size = record.release.size, status = "success", detail = result.uri))
             val install = runCatching { app.coordinator.autoInstallDownloaded(dest, result.name) }
                 .getOrElse { it.message?.take(200) ?: "自动安装未完成" }
             Result.success(workDataOf(SAVED_URI to result.uri, FILE_NAME to result.name, INSTALL to install))
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (exception: Exception) { Result.failure(workDataOf(ERROR to (exception.message?.take(250) ?: "下载失败，请重新下载"))) }
+        catch (exception: Exception) {
+            recordRef?.let { r -> runCatching { app.database.dao().addTransfer(TransferRecord(direction = "download",
+                name = apkFileName(r.release.label, r.release.versionName, r.release.versionCode), packageName = r.release.packageName,
+                versionName = r.release.versionName, size = r.release.size, status = "failed", detail = exception.message?.take(200).orEmpty())) } }
+            Result.failure(workDataOf(ERROR to (exception.message?.take(250) ?: "下载失败，请重新下载")))
+        }
         finally {
             observer.cancel()
             if (!finished && destination != null) withContext(NonCancellable + Dispatchers.IO) { app.coordinator.discardIncompleteApk(destination) }

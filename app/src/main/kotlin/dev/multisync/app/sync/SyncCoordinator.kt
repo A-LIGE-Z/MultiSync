@@ -9,6 +9,7 @@ import androidx.documentfile.provider.DocumentFile
 import dev.multisync.app.SyncApplication
 import dev.multisync.app.data.Observation
 import dev.multisync.app.data.TaskLog
+import dev.multisync.app.data.TransferRecord
 import dev.multisync.app.data.BackupStorage
 import dev.multisync.app.data.BackupNode
 import dev.multisync.app.data.ManagedStorage
@@ -324,6 +325,7 @@ class SyncCoordinator(private val application: SyncApplication) {
                     )
                 }
                 if (result.deleted) dao.deleteObservation(key)
+                if (result.uploaded) dao.addTransfer(TransferRecord(direction = "upload", name = name, size = size, status = "success", detail = rule.remotePath))
                 completed++
                 log(rule.name, if (result.sourceChanged) "已归档，源文件变化已保留" else "已完成",
                     "$name · ${if (result.uploaded) "新文件已上传" else "内容重复，已跳过上传"} · ${if (result.deleted) "本地已清理" else "本地保留"}", "success")
@@ -405,6 +407,10 @@ class SyncCoordinator(private val application: SyncApplication) {
                         cloud.commitVerified(recordPath, encoded)
                         check(cloud.readBytes(recordPath).contentEquals(encoded)) { "发布记录校验失败" }
                         runBlocking { log(rule.name, "已发布", "版本 ${release.versionName} (${release.versionCode})", "success") }
+                        runBlocking {
+                            dao.addTransfer(TransferRecord(direction = "upload", name = "${release.label}${if (release.versionName.isNotBlank()) " ${release.versionName}" else ""}",
+                                packageName = release.packageName, versionName = release.versionName, size = release.size, status = "success", detail = apkPath))
+                        }
                     }
                     val exports = listOf(exportName to "", oldNamedExport to hash.sha256, legacyExportName to "")
                         .filter { (name, folder) -> localExportExists(rule, name, folder) }
@@ -451,6 +457,8 @@ class SyncCoordinator(private val application: SyncApplication) {
                 check(version(packageInfo(rule.packageName)) == selected.versionCode) { "安装后版本校验失败" }
             }
             log(rule.name, "更新完成", selected.versionName, "success")
+            dao.addTransfer(TransferRecord(direction = "download", name = selected.apkPath.substringAfterLast('/'),
+                packageName = rule.packageName, versionName = selected.versionName, size = selected.size, status = "success", detail = selected.apkPath))
         } finally { apk.delete() }
     }
 

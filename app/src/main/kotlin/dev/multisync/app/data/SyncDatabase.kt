@@ -8,6 +8,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "rules")
@@ -21,6 +23,19 @@ data class TaskLog(
     val stage: String,
     val message: String = "",
     val level: String = "info",
+)
+
+@Entity(tableName = "transfers")
+data class TransferRecord(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val time: Long = System.currentTimeMillis(),
+    val direction: String, // "upload" or "download"
+    val name: String,
+    val packageName: String = "",
+    val versionName: String = "",
+    val size: Long = 0,
+    val status: String = "success", // success / failed
+    val detail: String = "",
 )
 
 @Entity(tableName = "observations")
@@ -38,10 +53,23 @@ interface SyncDao {
     @Query("SELECT * FROM logs ORDER BY id ASC") suspend fun allLogs(): List<TaskLog>
     @Insert suspend fun addLog(log: TaskLog)
     @Query("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)") suspend fun trimLogs()
+    @Insert suspend fun addTransfer(record: TransferRecord)
+    @Query("SELECT * FROM transfers ORDER BY id DESC LIMIT 300") fun observeTransfers(): Flow<List<TransferRecord>>
+    @Query("DELETE FROM transfers") suspend fun clearTransfers()
     @Query("SELECT * FROM observations WHERE `key` = :key") suspend fun observation(key: String): Observation?
     @Upsert suspend fun putObservation(observation: Observation)
     @Query("DELETE FROM observations WHERE `key` = :key") suspend fun deleteObservation(key: String)
 }
 
-@Database(entities = [RuleEntity::class, TaskLog::class, Observation::class], version = 1, exportSchema = true)
-abstract class SyncDatabase : RoomDatabase() { abstract fun dao(): SyncDao }
+@Database(entities = [RuleEntity::class, TaskLog::class, TransferRecord::class, Observation::class], version = 2, exportSchema = true)
+abstract class SyncDatabase : RoomDatabase() {
+    abstract fun dao(): SyncDao
+
+    companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `transfers` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `time` INTEGER NOT NULL, `direction` TEXT NOT NULL, `name` TEXT NOT NULL, `packageName` TEXT NOT NULL, `versionName` TEXT NOT NULL, `size` INTEGER NOT NULL, `status` TEXT NOT NULL, `detail` TEXT NOT NULL)")
+            }
+        }
+    }
+}

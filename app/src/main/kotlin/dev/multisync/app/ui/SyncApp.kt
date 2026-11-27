@@ -84,8 +84,8 @@ fun SyncApp(model: SyncViewModel) {
     val pageState = rememberSaveableStateHolder()
     val activity = LocalActivity.current
     val dark = settings.theme == "dark" || (settings.theme == "system" && isSystemInDarkTheme())
-    val labels = listOf("概览", "软件", "备份", "设置")
-    val icons = listOf(Icons.Outlined.Dashboard, Icons.Outlined.Apps, Icons.Outlined.Folder, Icons.Outlined.Settings)
+    val labels = listOf("概览", "软件", "备份", "记录", "设置")
+    val icons = listOf(Icons.Outlined.Dashboard, Icons.Outlined.Apps, Icons.Outlined.Folder, Icons.Outlined.SwapVert, Icons.Outlined.Settings)
     fun closeDetail() {
         detail = when {
             detail == "version" -> if (versionFromSoftware) "" else "versions"
@@ -175,7 +175,8 @@ fun SyncApp(model: SyncViewModel) {
                                         1 -> SoftwarePage(apps, model, { detail = "picker" }, { detail = "versions" },
                                             { comparedPackage = it; versionFromSoftware = true; detail = "version" }, { appPayload = SyncJson.encodeToString(it); detail = "app" })
                                         2 -> BackupPage(backups, ::newBackup, { backupPayload = SyncJson.encodeToString(it); detail = "backup" })
-                                        3 -> SettingsHub(settings, root, model) { detail = it }
+                                        3 -> TransfersPage(model)
+                                        4 -> SettingsHub(settings, root, model) { detail = it }
                                     }
                                 }
                             }
@@ -340,6 +341,43 @@ private fun BackupPage(rules: List<BackupRule>, add: () -> Unit, edit: (BackupRu
                 Spacer(Modifier.height(8.dp))
                 AppText("${if (rule.enabled) "启用" else "暂停"} · ${if (rule.deleteAfterVerify) "校验后清理" else "保留本地"}", size = 12.sp, color = MiuixTheme.colorScheme.primary)
             } }
+        }
+    }
+}
+
+@Composable
+private fun TransfersPage(model: SyncViewModel) {
+    val transfers by model.transfers.collectAsStateWithLifecycle()
+    val locale = LocalConfiguration.current.locales[0]
+    PageColumn {
+        if (transfers.isEmpty()) {
+            EmptyCard("暂无下载 / 上传记录", "下载安装包，或上传软件、备份文件后，会在这里按时间列出。", Icons.Outlined.SwapVert)
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppText("共 ${transfers.size} 条记录", Modifier.weight(1f), size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                ActionButton("清空记录", model::clearTransfers, primary = false)
+            }
+            transfers.forEach { t ->
+                UiCard(padding = PaddingValues(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(if (t.direction == "upload") Icons.Outlined.CloudUpload else Icons.Outlined.CloudDownload, null, Modifier.size(24.dp),
+                            tint = if (t.status == "failed") Color(0xFFD95454) else MiuixTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            AppText(t.name.ifBlank { t.packageName }, weight = FontWeight.Medium, maxLines = 2)
+                            val meta = listOfNotNull(
+                                t.versionName.takeIf { it.isNotBlank() },
+                                if (t.size > 0) String.format(locale, "%.1f MB", t.size / 1048576.0) else null,
+                                SimpleDateFormat("MM-dd HH:mm", locale).format(Date(t.time)),
+                                if (t.status == "failed") "失败" else "成功",
+                            ).joinToString(" · ")
+                            AppText(meta, size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 2)
+                            if (t.detail.isNotBlank()) AppText(t.detail, size = 11.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1)
+                        }
+                        AppText(if (t.direction == "upload") "上传" else "下载", size = 12.sp,
+                            color = if (t.direction == "upload") MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    }
+                }
+            }
         }
     }
 }
