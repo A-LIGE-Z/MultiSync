@@ -351,24 +351,21 @@ private fun TransfersPage(model: SyncViewModel) {
     val locale = LocalConfiguration.current.locales[0]
     val downloads = remember(transfers) { transfers.filter { it.direction == "download" } }
     val uploads = remember(transfers) { transfers.filter { it.direction == "upload" } }
+    var recordTab by rememberSaveable { mutableStateOf("download") }
     PageColumn {
         if (transfer.active) TransferCard(transfer, if (transfer.manualDownload) model::cancelApkDownload else null)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AppText("下载 ${downloads.size} 条 · 上传 ${uploads.size} 条", Modifier.weight(1f), size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-            ActionButton("清空记录", model::clearTransfers, primary = false, enabled = transfers.isNotEmpty())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionButton("下载 (${downloads.size})", { recordTab = "download" }, Modifier.weight(1f), primary = recordTab == "download")
+            ActionButton("上传 (${uploads.size})", { recordTab = "upload" }, Modifier.weight(1f), primary = recordTab == "upload")
         }
-        TransferGroup("下载记录", downloads, locale)
-        TransferGroup("上传记录", uploads, locale)
-    }
-}
-
-@Composable
-private fun TransferGroup(title: String, records: List<TransferRecord>, locale: java.util.Locale) {
-    SectionLabel("$title（${records.size}）")
-    if (records.isEmpty()) {
-        UiCard { AppText(if (title.startsWith("下载")) "暂无下载记录" else "暂无上传记录", size = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
-    } else {
-        records.forEach { record -> TransferRow(record, locale) }
+        val list = if (recordTab == "download") downloads else uploads
+        if (list.isEmpty()) {
+            UiCard { AppText(if (recordTab == "download") "暂无下载记录" else "暂无上传记录", size = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
+        } else {
+            list.forEach { record -> TransferRow(record, locale) }
+        }
+        Spacer(Modifier.height(4.dp))
+        ActionButton("清空记录", model::clearTransfers, Modifier.fillMaxWidth(), primary = false, enabled = transfers.isNotEmpty())
     }
 }
 
