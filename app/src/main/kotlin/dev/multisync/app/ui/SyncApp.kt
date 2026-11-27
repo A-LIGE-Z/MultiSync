@@ -41,6 +41,7 @@ import dev.multisync.app.R
 import dev.multisync.app.data.RuleEntity
 import dev.multisync.app.data.Settings
 import dev.multisync.app.data.TaskLog
+import dev.multisync.app.data.TransferRecord
 import dev.multisync.core.AppRule
 import dev.multisync.core.BackupRule
 import dev.multisync.core.InstalledApp
@@ -69,7 +70,6 @@ fun SyncApp(model: SyncViewModel) {
     val status by model.status.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     val root by model.rootStatus.collectAsStateWithLifecycle()
-    val transfer by model.transfer.collectAsStateWithLifecycle()
     val apps = remember(entities) { entities.filter { it.kind == "app" }.mapNotNull { runCatching { SyncJson.decodeFromString<AppRule>(it.payload) }.getOrNull() } }
     val backups = remember(entities) { entities.filter { it.kind == "backup" }.mapNotNull { runCatching { SyncJson.decodeFromString<BackupRule>(it.payload) }.getOrNull() } }
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -147,7 +147,6 @@ fun SyncApp(model: SyncViewModel) {
                         labels.forEachIndexed { index, label -> NavigationRailItem(tab == index, { tab = index }, icons[index], label) }
                     }
                     Column(Modifier.weight(1f).fillMaxHeight()) {
-                        if (transfer.active) TransferCard(transfer, if (transfer.manualDownload) model::cancelApkDownload else null)
                         if (message.isNotBlank()) UiCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), PaddingValues(10.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 AppText(message, Modifier.weight(1f), size = 12.sp, color = MiuixTheme.colorScheme.primary, maxLines = 3)
@@ -348,35 +347,47 @@ private fun BackupPage(rules: List<BackupRule>, add: () -> Unit, edit: (BackupRu
 @Composable
 private fun TransfersPage(model: SyncViewModel) {
     val transfers by model.transfers.collectAsStateWithLifecycle()
+    val transfer by model.transfer.collectAsStateWithLifecycle()
     val locale = LocalConfiguration.current.locales[0]
+    val downloads = remember(transfers) { transfers.filter { it.direction == "download" } }
+    val uploads = remember(transfers) { transfers.filter { it.direction == "upload" } }
     PageColumn {
-        if (transfers.isEmpty()) {
-            EmptyCard("暂无下载 / 上传记录", "下载安装包，或上传软件、备份文件后，会在这里按时间列出。", Icons.Outlined.SwapVert)
-        } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AppText("共 ${transfers.size} 条记录", Modifier.weight(1f), size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                ActionButton("清空记录", model::clearTransfers, primary = false)
-            }
-            transfers.forEach { t ->
-                UiCard(padding = PaddingValues(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(if (t.direction == "upload") Icons.Outlined.CloudUpload else Icons.Outlined.CloudDownload, null, Modifier.size(24.dp),
-                            tint = if (t.status == "failed") Color(0xFFD95454) else MiuixTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            AppText(t.name.ifBlank { t.packageName }, weight = FontWeight.Medium, maxLines = 2)
-                            val meta = listOfNotNull(
-                                t.versionName.takeIf { it.isNotBlank() },
-                                if (t.size > 0) String.format(locale, "%.1f MB", t.size / 1048576.0) else null,
-                                SimpleDateFormat("MM-dd HH:mm", locale).format(Date(t.time)),
-                                if (t.status == "failed") "失败" else "成功",
-                            ).joinToString(" · ")
-                            AppText(meta, size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 2)
-                            if (t.detail.isNotBlank()) AppText(t.detail, size = 11.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1)
-                        }
-                        AppText(if (t.direction == "upload") "上传" else "下载", size = 12.sp,
-                            color = if (t.direction == "upload") MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                    }
-                }
+        if (transfer.active) TransferCard(transfer, if (transfer.manualDownload) model::cancelApkDownload else null)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AppText("下载 ${downloads.size} 条 · 上传 ${uploads.size} 条", Modifier.weight(1f), size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            ActionButton("清空记录", model::clearTransfers, primary = false, enabled = transfers.isNotEmpty())
+        }
+        TransferGroup("下载记录", downloads, locale)
+        TransferGroup("上传记录", uploads, locale)
+    }
+}
+
+@Composable
+private fun TransferGroup(title: String, records: List<TransferRecord>, locale: java.util.Locale) {
+    SectionLabel("$title（${records.size}）")
+    if (records.isEmpty()) {
+        UiCard { AppText(if (title.startsWith("下载")) "暂无下载记录" else "暂无上传记录", size = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
+    } else {
+        records.forEach { record -> TransferRow(record, locale) }
+    }
+}
+
+@Composable
+private fun TransferRow(t: TransferRecord, locale: java.util.Locale) {
+    UiCard(padding = PaddingValues(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(if (t.direction == "upload") Icons.Outlined.CloudUpload else Icons.Outlined.CloudDownload, null, Modifier.size(24.dp),
+                tint = if (t.status == "failed") Color(0xFFD95454) else MiuixTheme.colorScheme.primary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                AppText(t.name.ifBlank { t.packageName }, weight = FontWeight.Medium, maxLines = 2)
+                val meta = listOfNotNull(
+                    t.versionName.takeIf { it.isNotBlank() },
+                    if (t.size > 0) String.format(locale, "%.1f MB", t.size / 1048576.0) else null,
+                    SimpleDateFormat("MM-dd HH:mm", locale).format(Date(t.time)),
+                    if (t.status == "failed") "失败" else "成功",
+                ).joinToString(" · ")
+                AppText(meta, size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 2)
+                if (t.detail.isNotBlank()) AppText(t.detail, size = 11.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1)
             }
         }
     }
