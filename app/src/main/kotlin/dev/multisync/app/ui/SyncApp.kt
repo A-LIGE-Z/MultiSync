@@ -384,7 +384,6 @@ private fun TransferRow(t: TransferRecord, locale: java.util.Locale, onClick: ()
                     if (t.status == "failed") "失败" else "成功",
                 ).joinToString(" · ")
                 AppText(meta, size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 2)
-                if (t.detail.isNotBlank()) AppText(t.detail, size = 11.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1)
             }
         }
     }
