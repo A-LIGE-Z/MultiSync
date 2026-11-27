@@ -25,6 +25,8 @@ import dev.multisync.app.data.BackupDirectoryInfo
 import dev.multisync.app.data.LocalDirectory
 import dev.multisync.app.data.hasDeviceFileAccess
 import dev.multisync.app.data.ManagedStorage
+import dev.multisync.app.data.TransferRecord
+import androidx.core.content.FileProvider
 import dev.multisync.app.data.ConfigurationBackupStore
 import dev.multisync.app.data.ConfigurationImportPreview
 import dev.multisync.app.data.PreparedConfiguration
@@ -688,6 +690,33 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     fun clearTransfers() = action {
         withContext(Dispatchers.IO) { dao.clearTransfers() }
         notify("传输记录已清空")
+    }
+
+    /** Tapping a download record: open the system installer if the local APK still exists, else say it is gone. */
+    fun installFromRecord(record: TransferRecord) = action {
+        if (record.direction != "download") { notify("这是上传记录，无需安装"); return@action }
+        val detail = record.detail
+        if (detail.isBlank()) { notify("安装包已删除"); return@action }
+        val parsed = runCatching { Uri.parse(detail) }.getOrNull()
+        val target: Uri = when {
+            parsed?.scheme == "file" -> {
+                val file = File(requireNotNull(parsed.path) { "路径无效" })
+                if (!file.isFile) { notify("安装包已删除"); return@action }
+                FileProvider.getUriForFile(app, app.packageName + ".fileprovider", file)
+            }
+            parsed?.scheme == "content" -> {
+                val ok = runCatching { app.contentResolver.openInputStream(parsed)?.use { true } ?: false }.getOrDefault(false)
+                if (!ok) { notify("安装包已删除"); return@action }
+                parsed
+            }
+            else -> { notify("安装包已删除"); return@action }
+        }
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(target, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try { app.startActivity(intent); notify("正在打开安装器…") }
+        catch (exception: Exception) { notify("无法拉起安装器：${exception.message ?: ""}") }
     }
 
     fun syncNow() {

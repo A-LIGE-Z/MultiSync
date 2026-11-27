@@ -362,7 +362,7 @@ private fun TransfersPage(model: SyncViewModel) {
         if (list.isEmpty()) {
             UiCard { AppText(if (recordTab == "download") "暂无下载记录" else "暂无上传记录", size = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
         } else {
-            list.forEach { record -> TransferRow(record, locale) }
+            list.forEach { record -> TransferRow(record, locale) { model.installFromRecord(record) } }
         }
         Spacer(Modifier.height(4.dp))
         ActionButton("清空记录", model::clearTransfers, Modifier.fillMaxWidth(), primary = false, enabled = transfers.isNotEmpty())
@@ -370,8 +370,8 @@ private fun TransfersPage(model: SyncViewModel) {
 }
 
 @Composable
-private fun TransferRow(t: TransferRecord, locale: java.util.Locale) {
-    UiCard(padding = PaddingValues(14.dp)) {
+private fun TransferRow(t: TransferRecord, locale: java.util.Locale, onClick: () -> Unit) {
+    Card(Modifier.fillMaxWidth(), insideMargin = PaddingValues(14.dp), cornerRadius = 16.dp, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(if (t.direction == "upload") Icons.Outlined.CloudUpload else Icons.Outlined.CloudDownload, null, Modifier.size(24.dp),
                 tint = if (t.status == "failed") Color(0xFFD95454) else MiuixTheme.colorScheme.primary)
