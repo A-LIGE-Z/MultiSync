@@ -165,7 +165,7 @@ fun SyncApp(model: SyncViewModel) {
                                     "appearance" -> AppearancePage(settings, model)
                                     "file-access" -> FileAccessPage(model)
                                     "configuration-backup" -> ConfigurationBackupPage(model)
-                                    "about" -> AboutPage()
+                                    "about" -> AboutPage(model)
                                     "versions" -> RemoteVersionsPage(model, { comparedPackage = it; versionFromSoftware = false; detail = "version" }, { connectionFromVersions = true; detail = "connection" })
                                     "version" -> RemoteVersionDetails(model, comparedPackage)
                                     else -> when (tab) {
@@ -657,9 +657,11 @@ private fun AppearancePage(settings: Settings, model: SyncViewModel) {
 }
 
 @Composable
-private fun AboutPage() {
+private fun AboutPage(model: SyncViewModel) {
     var licenses by rememberSaveable { mutableStateOf(false) }
     val resources = LocalResources.current
+    val context = LocalContext.current
+    val update by model.appUpdate.collectAsStateWithLifecycle()
     PageColumn {
         UiCard {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -668,6 +670,26 @@ private fun AboutPage() {
             }
             Spacer(Modifier.height(14.dp))
             AppText("支持单 APK 同步与共享目录备份。分包安装和自动恢复尚未开放。", size = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        }
+        UiCard(padding = PaddingValues(0.dp)) {
+            MenuRow("检查更新", when {
+                update.checking -> "正在检查…"
+                update.error.isNotBlank() -> update.error
+                update.upToDate -> "已是最新版本 ${update.latest}"
+                update.latest.isNotBlank() -> "发现新版本 ${update.latest}"
+                else -> "通过 GitHub 检查新版本"
+            }, Icons.Outlined.SystemUpdate) { model.checkAppUpdate() }
+            if (update.url.isNotBlank()) {
+                GroupDivider()
+                Column(Modifier.padding(16.dp)) {
+                    ActionButton("下载并安装 ${update.latest}", model::downloadAndInstallUpdate, Modifier.fillMaxWidth())
+                }
+            }
+        }
+        UiCard(padding = PaddingValues(0.dp)) {
+            MenuRow("项目主页", "https://github.com/A-LIGE-Z/MultiSync", Icons.Outlined.Link) {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/A-LIGE-Z/MultiSync"))) }
+            }
         }
         UiCard(padding = PaddingValues(0.dp)) { MenuRow("开源许可", "Miuix、Kotlin、AndroidX、OkHttp", onClick = { licenses = !licenses }) }
         if (licenses) UiCard { AppText(remember(resources) { resources.openRawResource(R.raw.open_source_licenses).bufferedReader().use { it.readText() } }, size = 11.sp) }

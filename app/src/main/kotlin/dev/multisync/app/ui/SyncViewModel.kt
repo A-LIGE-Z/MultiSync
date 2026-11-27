@@ -27,6 +27,8 @@ import dev.multisync.app.data.hasDeviceFileAccess
 import dev.multisync.app.data.ManagedStorage
 import dev.multisync.app.data.TransferRecord
 import androidx.core.content.FileProvider
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import dev.multisync.app.data.ConfigurationBackupStore
 import dev.multisync.app.data.ConfigurationImportPreview
 import dev.multisync.app.data.PreparedConfiguration
@@ -79,6 +81,22 @@ data class ApkDownloadState(val ready: Boolean = false, val active: Boolean = fa
     val sha256: String = "", val fileName: String = "", val status: String = "", val error: String = "", val savedUri: String = "",
     val install: String = "")
 
+data class AppUpdateState(val checking: Boolean = false, val latest: String = "", val url: String = "", val name: String = "",
+    val upToDate: Boolean = false, val error: String = "")
+
+private data class ReleaseInfo(val tag: String, val apkUrl: String?, val apkName: String?)
+
+private fun compareVersion(a: String, b: String): Int {
+    fun parts(s: String) = s.split('.', '-', '+', '_').mapNotNull { it.toIntOrNull() }
+    val pa = parts(a); val pb = parts(b)
+    val n = maxOf(pa.size, pb.size)
+    for (i in 0 until n) {
+        val x = pa.getOrElse(i) { 0 }; val y = pb.getOrElse(i) { 0 }
+        if (x != y) return x.compareTo(y)
+    }
+    return 0
+}
+
 internal fun apkDownloadState(info: WorkInfo): ApkDownloadState {
     fun tag(prefix: String) = info.tags.firstOrNull { it.startsWith(prefix) }?.removePrefix(prefix).orEmpty()
     val active = !info.state.isFinished
@@ -110,6 +128,8 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     private var preparedConfiguration: PreparedConfiguration? = null
     private val mutableApkDownload = MutableStateFlow(ApkDownloadState())
     val apkDownload = mutableApkDownload.asStateFlow()
+    private val mutableAppUpdate = MutableStateFlow(AppUpdateState())
+    val appUpdate = mutableAppUpdate.asStateFlow()
     private var apkObserver: Job? = null
     private var pendingApk: CatalogRelease? = null
     private var pendingApkConnection: String = ""
@@ -717,6 +737,76 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
         }
         try { app.startActivity(intent); notify("正在打开安装器…") }
         catch (exception: Exception) { notify("无法拉起安装器：${exception.message ?: ""}") }
+    }
+
+    /** Checks the project's GitHub Releases for a newer version of this app. */
+    fun checkAppUpdate() = action {
+        if (mutableAppUpdate.value.checking) return@action
+        mutableAppUpdate.value = AppUpdateState(checking = true)
+        try {
+            val info = withContext(Dispatchers.IO) { fetchLatestRelease() }
+            if (info == null) { mutableAppUpdate.value = AppUpdateState(error = "GitHub 上还没有发布版本"); return@action }
+            val tagVer = info.tag.removePrefix("v").removePrefix("V").trim()
+            val current = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull().orEmpty()
+            if (compareVersion(tagVer, current) <= 0) {
+                mutableAppUpdate.value = AppUpdateState(upToDate = true, latest = tagVer)
+                notify("已是最新版本 ${current.ifBlank { tagVer }}")
+                return@action
+            }
+            if (info.apkUrl == null) { mutableAppUpdate.value = AppUpdateState(latest = tagVer, error = "新版本 $tagVer 未提供 APK 安装包"); return@action }
+            mutableAppUpdate.value = AppUpdateState(latest = tagVer, url = info.apkUrl, name = info.apkName.orEmpty())
+            notify("发现新版本 $tagVer")
+        } catch (exception: Exception) {
+            mutableAppUpdate.value = AppUpdateState(error = exception.message?.take(200) ?: "检查更新失败")
+        }
+    }
+
+    /** Downloads the discovered update APK and opens the system installer. */
+    fun downloadAndInstallUpdate() = action {
+        val state = mutableAppUpdate.value
+        if (state.url.isBlank()) { notify("请先检查更新"); return@action }
+        notify("正在下载更新 ${state.latest}…")
+        val file = withContext(Dispatchers.IO) {
+            val client = OkHttpClient.Builder().build()
+            val request = Request.Builder().url(state.url).header("User-Agent", "MultiSync").build()
+            client.newCall(request).execute().use { response ->
+                check(response.isSuccessful) { "下载失败：HTTP ${response.code}" }
+                val out = File(app.cacheDir, "update-${state.latest.ifBlank { "latest" }}.apk")
+                val input = response.body?.byteStream() ?: error("下载响应为空")
+                input.use { source -> out.outputStream().use { sink -> source.copyTo(sink) } }
+                out
+            }
+        }
+        val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        app.startActivity(intent)
+        notify("已下载更新，正在打开安装器…")
+    }
+
+    private fun fetchLatestRelease(): ReleaseInfo? {
+        val client = OkHttpClient.Builder().build()
+        val request = Request.Builder().url("https://api.github.com/repos/A-LIGE-Z/MultiSync/releases/latest")
+            .header("Accept", "application/vnd.github+json").header("User-Agent", "MultiSync").build()
+        client.newCall(request).execute().use { response ->
+            if (response.code == 404) return null
+            check(response.isSuccessful) { "GitHub 返回 HTTP ${response.code}" }
+            val body = response.body?.string() ?: return null
+            val obj = org.json.JSONObject(body)
+            val tag = obj.optString("tag_name")
+            if (tag.isBlank()) return null
+            var apkUrl: String? = null
+            var apkName: String? = null
+            val assets = obj.optJSONArray("assets")
+            if (assets != null) for (i in 0 until assets.length()) {
+                val asset = assets.getJSONObject(i)
+                val n = asset.optString("name")
+                if (n.endsWith(".apk", ignoreCase = true)) { apkUrl = asset.optString("browser_download_url"); apkName = n; break }
+            }
+            return ReleaseInfo(tag, apkUrl, apkName)
+        }
     }
 
     fun syncNow() {
